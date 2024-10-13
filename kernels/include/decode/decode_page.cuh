@@ -24,6 +24,7 @@
 #define FLASHINFER_PAGE_CUH_
 
 #include <cuda_fp16.h>
+#define CUDART_MAX_NORMAL_FP16 __ushort_as_half((unsigned short)0x7BFFU)
 #include <vector>
 
 #include "flashinfer/layout.cuh"

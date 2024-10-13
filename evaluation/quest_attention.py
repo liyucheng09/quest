@@ -16,6 +16,8 @@ from transformers.models.llama.modeling_llama import (
     repeat_kv,
 )
 
+from transformers import DynamicCache
+
 
 def local_heavy_hitter_mask(attn_weights, token_budget, chunk_size):
     # attn_weights (BS, head, query, keys)
@@ -88,7 +90,9 @@ def forward(
             use_cache,
             **kwargs,
         )
-
+    
+    if past_key_value is not None:
+        past_key_value = DynamicCache.to_legacy_cache(past_key_value)
     query_states = (
         self.q_proj(hidden_states)
         .view(bsz, q_len, self.num_heads, self.head_dim)
@@ -107,8 +111,9 @@ def forward(
 
     kv_seq_len = key_states.shape[-2]
     if past_key_value is not None:
-        kv_seq_len += past_key_value[0].shape[-2]
-    cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
+        kv_seq_len += past_key_value[self.layer_id][0].shape[-2]
+    # cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
+    cos, sin = self.rotary_emb(value_states, position_ids)
     query_states, key_states = apply_rotary_pos_emb(
         query_states, key_states, cos, sin, position_ids
     )
@@ -116,11 +121,12 @@ def forward(
 
     if past_key_value is not None:
         # reuse k, v, self_attention
-        key_states = torch.cat([past_key_value[0], key_states], dim=2)
-        value_states = torch.cat([past_key_value[1], value_states], dim=2)
+        key_states = torch.cat([past_key_value[self.layer_id][0], key_states], dim=2)
+        value_states = torch.cat([past_key_value[self.layer_id][1], value_states], dim=2)
 
-    past_key_value = (key_states, value_states) if use_cache else None
-
+    past_key_value = list(past_key_value)
+    past_key_value[self.layer_id] = (key_states, value_states) if use_cache else None
+    past_key_value = tuple(past_key_value)
     key_states = repeat_kv(key_states, self.num_key_value_groups)
     value_states = repeat_kv(value_states, self.num_key_value_groups)
 
@@ -222,7 +228,7 @@ def forward(
     if not output_attentions:
         attn_weights = None
 
-    return attn_output, attn_weights, past_key_value
+    return attn_output, attn_weights, DynamicCache.from_legacy_cache(past_key_value)
 
 
 def forward_yarn(
